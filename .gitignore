@@ -1,0 +1,15 @@
+*.iml
+**/.idea/*
+#!.idea/vcs.xml
+#!.idea/runConfigurations
+#!.idea/runConfigurations/*
+#!.idea/codeStyles
+#!.idea/codeStyles/*
+#!.idea/dictionaries
+#!.idea/dictionaries/*
+#!.idea/copyright
+#!.idea/copyright/*
+#!.idea/icon.png
+.gradle
+build
+out
