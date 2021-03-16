@@ -1,11 +1,14 @@
 package punkhomov.spring.replaceuser
 
 import org.springframework.core.log.LogMessage
+import org.springframework.http.HttpMethod
+import org.springframework.security.authentication.AccountStatusUserDetailsChecker
 import org.springframework.security.authentication.AnonymousAuthenticationToken
 import org.springframework.security.authentication.AuthenticationDetailsSource
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.Authentication
 import org.springframework.security.core.AuthenticationException
+import org.springframework.security.core.GrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.core.userdetails.UserDetails
 import org.springframework.security.core.userdetails.UserDetailsChecker
@@ -17,7 +20,7 @@ import org.springframework.util.Assert
 import org.springframework.web.filter.GenericFilterBean
 import org.springframework.web.util.UrlPathHelper
 import punkhomov.spring.replaceuser.core.AuthorityChanger
-import punkhomov.spring.replaceuser.core.ReplaceUserFilterConfig
+import punkhomov.spring.replaceuser.core.ReplaceUserConstants
 import javax.servlet.FilterChain
 import javax.servlet.ServletRequest
 import javax.servlet.ServletResponse
@@ -25,55 +28,26 @@ import javax.servlet.http.HttpServletRequest
 import javax.servlet.http.HttpServletResponse
 
 
-class ReplaceUserFilter(config: ReplaceUserFilterConfig) : GenericFilterBean() {
+class ReplaceUserFilter(config: Config) : GenericFilterBean() {
     private val authenticationDetailsSource: AuthenticationDetailsSource<HttpServletRequest, *> =
         WebAuthenticationDetailsSource()
 
     private val usernameParameter: String = config.usernameParameter
-    private val replaceUserMatcher: RequestMatcher
-    private val refererUrlAttributeName: String? = config.refererUrlAttributeName
+    private val replaceUserMatcher: RequestMatcher = config.matcher()
+    private val refererAttributeName: String? = config.refererAttributeName
 
-    private val successHandler: AuthenticationSuccessHandler
-    private val failureHandler: AuthenticationFailureHandler
+    private val successHandler: AuthenticationSuccessHandler = config.successHandler()
+    private val failureHandler: AuthenticationFailureHandler = config.failureHandler()
 
-    private val userDetailsService: UserDetailsService
+    private val userDetailsService: UserDetailsService = config.userDetailsService()
     private val userDetailsChecker: UserDetailsChecker = config.userDetailsChecker
 
-    private val anonymousKey = config.anonymousKey
-    private val anonymousPrincipal = config.anonymousPrincipal
-    private val anonymousAuthorities = config.anonymousAuthorities
+    private val anonymousKey: String = config.anonymousKey
+    private val anonymousPrincipal: Any = config.anonymousPrincipal
+    private val anonymousAuthorities: Collection<GrantedAuthority> = config.anonymousAuthorities
 
     private val authorityChanger: AuthorityChanger? = config.authorityChanger
 
-    init {
-        Assert.notNull(config.replaceUrl, "replaceUrl must be specified")
-        this.replaceUserMatcher =
-            AntPathRequestMatcher(config.replaceUrl, config.httpMethod.name, true, UrlPathHelper())
-
-        Assert.notNull(config.userDetailsService, "userDetailsService must be specified")
-        this.userDetailsService = config.userDetailsService!!
-
-        Assert.isTrue(
-            config.successHandler != null || config.successUrl != null,
-            "You must set either a successHandler or the successUrl"
-        )
-        this.successHandler = if (config.successUrl != null) {
-            Assert.isNull(config.successHandler, "You cannot set both successHandler and failureUrl")
-            SimpleUrlAuthenticationSuccessHandler(config.successUrl)
-        } else {
-            config.successHandler!!
-        }
-
-        this.failureHandler = if (config.failureHandler == null) {
-            if (config.failureUrl != null)
-                SimpleUrlAuthenticationFailureHandler(config.failureUrl)
-            else
-                SimpleUrlAuthenticationFailureHandler()
-        } else {
-            Assert.isNull(config.failureUrl, "You cannot set both a switchFailureUrl and a failureHandler")
-            config.failureHandler!!
-        }
-    }
 
     override fun doFilter(request: ServletRequest, response: ServletResponse, chain: FilterChain) {
         doFilter(request as HttpServletRequest, response as HttpServletResponse, chain)
@@ -151,15 +125,72 @@ class ReplaceUserFilter(config: ReplaceUserFilterConfig) : GenericFilterBean() {
     }
 
     private fun saveRefererUrlToSession(request: HttpServletRequest) {
-        if (refererUrlAttributeName != null) {
+        if (refererAttributeName != null) {
             val session = request.getSession(false)
             val refererUrl = request.getHeader("referer")
             if (session != null && refererUrl != null) {
-                session.setAttribute(refererUrlAttributeName, refererUrl)
+                session.setAttribute(refererAttributeName, refererUrl)
                 if (logger.isTraceEnabled) {
                     logger.trace(LogMessage.format("Saving referer url [%s] to current session", refererUrl))
                 }
             }
+        }
+    }
+
+    class Config {
+        var replaceUrl: String? = null
+        var httpMethod: HttpMethod = ReplaceUserConstants.DEFAULT_HTTP_METHOD
+        var usernameParameter: String = ReplaceUserConstants.DEFAULT_USERNAME_PARAMETER
+        var refererAttributeName: String? = null
+
+        var successUrl: String? = null
+        var failureUrl: String? = null
+        var successHandler: AuthenticationSuccessHandler? = null
+        var failureHandler: AuthenticationFailureHandler? = null
+
+        var userDetailsService: UserDetailsService? = null
+        var userDetailsChecker: UserDetailsChecker = AccountStatusUserDetailsChecker()
+
+        var anonymousKey: String = ReplaceUserConstants.DEFAULT_ANONYMOUS_KEY
+        var anonymousPrincipal: Any = ReplaceUserConstants.DEFAULT_ANONYMOUS_PRINCIPAL
+        var anonymousAuthorities: Collection<GrantedAuthority> = ReplaceUserConstants.DEFAULT_ANONYMOUS_AUTHORITIES
+
+        var authorityChanger: AuthorityChanger? = null
+
+
+        internal fun matcher(): AntPathRequestMatcher {
+            Assert.notNull(replaceUrl, "replaceUrl must be specified")
+            return AntPathRequestMatcher(replaceUrl, httpMethod.name, true, UrlPathHelper())
+        }
+
+        internal fun successHandler(): AuthenticationSuccessHandler {
+            Assert.isTrue(
+                successHandler != null || successUrl != null,
+                "You must set either a successHandler or the successUrl"
+            )
+            return if (successUrl != null) {
+                Assert.isNull(successHandler, "You cannot set both successHandler and failureUrl")
+                SimpleUrlAuthenticationSuccessHandler(successUrl)
+            } else {
+                successHandler!!
+            }
+        }
+
+        internal fun failureHandler(): AuthenticationFailureHandler {
+            return if (failureHandler == null) {
+                if (failureUrl != null)
+                    SimpleUrlAuthenticationFailureHandler(failureUrl)
+                else
+                    SimpleUrlAuthenticationFailureHandler()
+            } else {
+                Assert.isNull(failureUrl, "You cannot set both a failureUrl and a failureHandler")
+                failureHandler!!
+            }
+        }
+
+        internal fun userDetailsService(): UserDetailsService {
+            Assert.notNull(userDetailsService, "userDetailsService must be specified")
+            return userDetailsService!!
         }
     }
 }
